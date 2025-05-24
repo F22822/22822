@@ -3,14 +3,7 @@ class BatCaveBizSource extends ComicSource {
     key = "batcavebiz";
     version = "1.0.3"; // Версия увеличена
     minAppVersion = "1.0.0";
-    // update url - ЗАМЕНИТЕ НА РЕАЛЬНЫЙ URL, ГДЕ БУДЕТ РАЗМЕЩЕН ЭТОТ ФАЙЛ
-    url = "https://raw.githubusercontent.com/F22822/22822/refs/heads/main/batcave.js"; // TODO: Замените на ваш URL
-
-    BASE_URL = "https://batcave.biz";
-
-    /**
-     * Вспомогательная функция для извлечения window.__DATA__ или window.__XFILTER__ из тега script
-     */
+    url = "https://raw.githubusercontent.com/F22822/22822/refs/heads/main/batcave.js"
     extractWindowScriptData(html, variableName) {
         try {
             // Ищем переменную JavaScript в HTML
