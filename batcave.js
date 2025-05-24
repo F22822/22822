@@ -4,7 +4,7 @@ class BatCaveBizSource extends ComicSource {
     version = "1.0.3"; // Версия увеличена
     minAppVersion = "1.0.0";
     // update url - ЗАМЕНИТЕ НА РЕАЛЬНЫЙ URL, ГДЕ БУДЕТ РАЗМЕЩЕН ЭТОТ ФАЙЛ
-    url = "https://example.com/batcavebiz_source.js"; // TODO: Замените на ваш URL
+    url = "https://raw.githubusercontent.com/F22822/22822/refs/heads/main/batcave.js"; // TODO: Замените на ваш URL
 
     BASE_URL = "https://batcave.biz";
 
