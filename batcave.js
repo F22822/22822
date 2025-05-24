@@ -1,27 +1,46 @@
 class BatCaveBizSource extends ComicSource {
+    // 漫画源名称
     name = "BatCave.biz";
+    // 漫画源唯一标识符
     key = "batcavebiz";
-    version = "1.0.3"; // Версия увеличена
+    // 漫画源版本
+    version = "1.0.4"; // 版本递增
+    // 应用要求的最低版本
     minAppVersion = "1.0.0";
-    url = "https://raw.githubusercontent.com/F22822/22822/refs/heads/main/batcave.js"
+    // 更新脚本的URL - 您需要将此文件托管在某处并在此处提供URL
+    url = "https://raw.githubusercontent.com/F22822/22822/refs/heads/main/batcave.js"; // 您提供的URL
+
+    // 网站基础URL
+    BASE_URL = "https://batcave.biz";
+
+    /**
+     * 从 script 标签中提取 window.__DATA__ 或 window.__XFILTER__ 对象
+     * @param html {string} - HTML 文本内容
+     * @param variableName {string} - 要提取的变量名 (例如 "__DATA__" 或 "__XFILTER__")
+     * @returns {object|null} - 解析后的 JSON 对象或 null
+     */
     extractWindowScriptData(html, variableName) {
         try {
-            // Ищем переменную JavaScript в HTML
+            // 正则表达式查找 "window.VARIABLE_NAME = { ... };"
             const regex = new RegExp(`window\\.${variableName}\\s*=\\s*(\{[\s\S]*?\});`, "m");
             const match = html.match(regex);
             if (match && match[1]) {
                 return JSON.parse(match[1]);
             }
         } catch (e) {
-            console.error(`Error parsing window.${variableName}:`, e);
+            console.error(`解析 window.${variableName} 出错:`, e);
         }
         return null;
     }
 
-    // [Optional] account related
+    // [可选] 账号相关
     account = {
+        /**
+         * 使用账号密码登录
+         */
         login: async (account, pwd) => {
             const loginUrl = `${this.BASE_URL}/`; 
+            // 使用您提供的表单数据格式 (login_name=FFFF&login_password=A111111&login=submit)
             const formData = `login_name=${encodeURIComponent(account)}&login_password=${encodeURIComponent(pwd)}&login=submit`;
             const headers = {
                 'Content-Type': 'application/x-www-form-urlencoded', 
@@ -35,63 +54,79 @@ class BatCaveBizSource extends ComicSource {
                 if (Array.isArray(cookiesHeader)) {
                     cookiesHeader = cookiesHeader.join(';');
                 }
+                // 检查响应中是否设置了 DLE 引擎的登录 cookies
                 if (cookiesHeader.includes('dle_user_id=') && cookiesHeader.includes('dle_password=')) {
                     const userIdMatch = cookiesHeader.match(/dle_user_id=([^;]+)/);
                     if (userIdMatch && userIdMatch[1] && userIdMatch[1] !== "0" && userIdMatch[1] !== "") {
-                        return 'Login successful (cookies set with valid user ID)';
+                        return '登录成功 (cookies已设置，用户ID有效)';
                     }
                 }
+                // 如果cookies不明确，检查页面内容是否有登录成功的迹象
                 const document = new HtmlDocument(res.body);
                 if (document.select('a[href*="action=logout"]').length > 0) { 
                     document.dispose();
-                    return 'Login successful (logout link found in response)';
+                    return '登录成功 (在响应中找到退出链接)';
                 }
                 const loginTitleElement = document.select('.login__title'); 
                 if (loginTitleElement && loginTitleElement.text().includes(account)) { 
                     document.dispose();
-                    return 'Login successful (username found in response)';
+                    return '登录成功 (在响应中找到用户名)';
                 }
                 document.dispose();
             }
-            throw `Login failed. Status: ${res.status}. Response hint: ${res.body.substring(0, 300)}`;
+            throw `登录失败. 状态码: ${res.status}. 响应体提示: ${res.body.substring(0, 300)}`;
         },
+        /**
+         * 退出登录
+         */
         logout: async () => {
             const logoutUrl = `${this.BASE_URL}/index.php?action=logout`;
             await Network.get(logoutUrl);
-            Network.deleteCookies(this.BASE_URL);
-            return "Logout action performed";
+            Network.deleteCookies(this.BASE_URL); // 清除当前域名的cookies
+            return "退出登录操作已执行";
         },
+        // 注册页面URL (DLE引擎通常的注册路径)
         registerWebsite: `${this.BASE_URL}/index.php?do=register` 
     };
 
-    // explore page list
+    // 探索页面列表
     explore = [
         {
+            // 探索页面的标题，用作唯一标识符
             title: "Homepage", 
+            // 页面类型: multiPartPage (多个部分), multiPageComicList (分页列表), mixed (混合)
             type: "multiPartPage", 
+            /**
+             * 加载数据函数
+             * @param page {number | null} - 页码，对于 multiPartPage 通常是1或null
+             * @returns {Promise<Object[]> | Promise<Object>}
+             */
             load: async (page) => { 
                 let url = this.BASE_URL;
-                if (page && page > 1) { // Пагинация для "Newest comic releases" (Источник 344 из comix.txt (аналогично ранее предоставленному 首页.txt))
+                // 主页上的"最新漫画发布"部分有分页 (来源: comix.txt)
+                if (page && page > 1) {
                     url = `${this.BASE_URL}/page/${page}/`;
                 }
 
                 const res = await Network.get(url);
                 if (res.status !== 200) {
-                    throw `HTTP error ${res.status}`;
+                    throw `HTTP 请求错误，状态码: ${res.status}`;
                 }
-                const document = new HtmlDocument(res.body); // ИСПРАВЛЕНО
-                const sections = [];
+                const document = new HtmlDocument(res.body); // 使用正确的HTML解析器
+                const sections = []; // 用于存放不同区块的漫画
 
+                // 辅助函数，用于解析海报样式的漫画元素
                 const parsePosterElement = (element, isCarouselOrHot) => {
                     let linkElement, comicUrl, titleElement, coverElement, publisherElement, yearElement;
-                    if (isCarouselOrHot) { 
+                    
+                    if (isCarouselOrHot) { // 用于轮播图和"热门新品"
                         linkElement = element; 
                         comicUrl = linkElement.attr('href');
                         titleElement = linkElement.select('p.poster__title'); 
                         coverElement = linkElement.select('div.poster__img img');
                         publisherElement = linkElement.select('ul.poster__subtitle li').first(); 
                         yearElement = linkElement.select('ul.poster__subtitle li').last(); 
-                    } else { 
+                    } else { // 用于"最新发布"
                         linkElement = element.select('a.latest__img'); 
                         if (!linkElement) return null;
                         comicUrl = linkElement.attr('href');
@@ -100,6 +135,7 @@ class BatCaveBizSource extends ComicSource {
                     }
 
                     if (!comicUrl) return null;
+                    // 从URL中提取 "ID-SLUG" 格式的ID, 例如 "6975-invincible-2003"
                     const idMatch = comicUrl.match(/\/(\d+-[^\/]+\.html)/);
                     const id = idMatch ? idMatch[1].replace('.html', '') : null; 
                     if (!id) return null;
@@ -136,7 +172,9 @@ class BatCaveBizSource extends ComicSource {
                     };
                 };
 
+                // 仅为第一页加载轮播图和热门区块
                 if (!page || page === 1) { 
+                    // 区块1: 顶部轮播 (Popular)
                     const popularCarouselSection = { title: "Popular (Carousel)", comics: [] };
                     const popularCarouselElements = document.selectAll('div#owl-carou a.poster.grid-item'); 
                     popularCarouselElements.forEach(el => {
@@ -145,6 +183,7 @@ class BatCaveBizSource extends ComicSource {
                     });
                     if (popularCarouselSection.comics.length > 0) sections.push(popularCarouselSection);
 
+                    // 区块2: 热门新品 (Hot New Releases)
                     const hotReleasesSection = { title: "Hot New Releases", comics: [] };
                     const hotReleasesElements = document.selectAll('section.sect--hot div.sect__content a.poster.grid-item'); 
                     hotReleasesElements.forEach(el => {
@@ -154,6 +193,7 @@ class BatCaveBizSource extends ComicSource {
                     if (hotReleasesSection.comics.length > 0) sections.push(hotReleasesSection);
                 }
                 
+                // 区块3: 最新漫画发布 (Newest Comic Releases) - Этот раздел имеет пагинацию
                 const latestReleasesSectionTitle = (page && page > 1) ? `Newest Comic Releases (Page ${page})` : "Newest Comic Releases";
                 const latestReleasesSection = { title: latestReleasesSectionTitle, comics: [] };
                 const latestElements = document.selectAll('section.sect--latest ul#content-load > li.latest.grid-item'); 
@@ -163,120 +203,149 @@ class BatCaveBizSource extends ComicSource {
                 });
                 
                 if (latestReleasesSection.comics.length > 0) {
-                     if (!page || page === 1) {
+                     if (!page || page === 1) { // Если первая страница, добавляем ко всем секциям
                         sections.push(latestReleasesSection);
-                     } else {
-                        document.dispose(); // ИСПРАВЛЕНО
+                     } else { // Если это пагинация (page > 1), возвращаем только эту секцию
+                        document.dispose();
                         return [latestReleasesSection];
                      }
                 }
-                document.dispose(); // ИСПРАВЛЕНО
+                
+                document.dispose();
                 return sections; 
             }
         }
     ];
 
-    // categories
+    // 分类
     category = {
-        title: "Catalogue", // (Источник 29 из comix.txt)
-        parts: [], // Будет заполнено в init()
-        enableRankingPage: false, // На странице /comix/ нет явного рейтинга, но есть сортировка
+        // 分类页标题
+        title: "Catalogue", 
+        // 分类区块，将在 init() 中动态填充
+        parts: [], 
+        // 是否启用排行榜页面
+        enableRankingPage: false, 
     };
 
     /**
-     * Инициализация категорий из данных XFILTER на странице /comix/
+     * 初始化函数，用于从 /comix/ 页面加载和解析分类信息
      */
     async init() {
         try {
             const res = await Network.get(`${this.BASE_URL}/comix/`);
             if (res.status === 200) {
-                const xfilterData = this.extractWindowScriptData(res.body, "__XFILTER__"); // (Источник 68 из comix.txt)
-                if (xfilterData && xfilterData.filter_items) { // (Источник 69 из comix.txt)
+                const xfilterData = this.extractWindowScriptData(res.body, "__XFILTER__"); 
+                if (xfilterData && xfilterData.filter_items) { 
                     const parts = [];
-                    // Обработка издателей (p) (Источник 74 из comix.txt)
+                    // 处理出版社 (p)
                     if (xfilterData.filter_items.p && xfilterData.filter_items.p.values) {
                         parts.push({
-                            name: xfilterData.filter_items.p.title || "Publisher", // (Источник 75 из comix.txt)
+                            name: xfilterData.filter_items.p.title || "Publisher", 
                             type: "fixed",
-                            categories: xfilterData.filter_items.p.values.map(v => v.value), // (Источник 76 из comix.txt)
+                            categories: xfilterData.filter_items.p.values.map(v => v.value), 
                             itemType: "category",
-                            // categoryParams будут вида "p_ID"
-                            categoryParams: xfilterData.filter_items.p.values.map(v => `p_${v.id}`), // (Источник 77 из comix.txt)
+                            categoryParams: xfilterData.filter_items.p.values.map(v => `p_${v.id}`), 
                         });
                     }
-                    // Обработка жанров (g) (Источник 231 из comix.txt)
+                    // 处理类型/ ژانры (g)
                     if (xfilterData.filter_items.g && xfilterData.filter_items.g.values) {
                         parts.push({
-                            name: xfilterData.filter_items.g.title || "Genres", // (Источник 232 из comix.txt)
+                            name: xfilterData.filter_items.g.title || "Genres", 
                             type: "fixed",
-                            categories: xfilterData.filter_items.g.values.map(v => v.value), // (Источник 233 из comix.txt)
+                            categories: xfilterData.filter_items.g.values.map(v => v.value), 
                             itemType: "category",
-                            // categoryParams будут вида "g_ID"
-                            categoryParams: xfilterData.filter_items.g.values.map(v => `g_${v.id}`), // (Источник 234 из comix.txt)
+                            categoryParams: xfilterData.filter_items.g.values.map(v => `g_${v.id}`), 
                         });
                     }
-                     // Обработка годов (y) - как отдельная опция, а не часть parts, т.к. это диапазон
-                     // Можно добавить это в categoryComics.optionList если нужно
                     this.category.parts = parts;
+                } else {
+                    this.category.parts = [{ name: "分类加载失败", type: "fixed", categories: ["无数据"], itemType: "category", categoryParams: ["error"] }];
                 }
+            } else {
+                 this.category.parts = [{ name: "分类加载失败 (HTTP错误)", type: "fixed", categories: [`错误码: ${res.status}`], itemType: "category", categoryParams: ["error"] }];
             }
         } catch (e) {
-            console.error("Failed to init categories from /comix/:", e);
-             // Устанавливаем заглушку, если инициализация не удалась
-            this.category.parts = [{ name: "Genres (Error)", type: "fixed", categories: ["Failed to load"], itemType: "category", categoryParams: ["error"] }];
+            console.error("初始化分类失败 (/comix/):", e);
+            this.category.parts = [{ name: "分类加载异常", type: "fixed", categories: ["请检查网络或脚本"], itemType: "category", categoryParams: ["error"] }];
         }
     }
 
-
-    // category comic loading related
+    // 分类漫画加载相关
     categoryComics = {
-        load: async (categoryName, param, options, page) => { // param теперь "p_ID" или "g_ID"
-            const [type, id] = param.split('_'); // type 'p' or 'g', id is the actual filter ID
-            let sortParam = "";
-            let yearParam = "";
+        /**
+         * 加载特定分类下的漫画列表
+         * @param categoryName {string} - 分类名称 (未使用，因为 param 包含所需信息)
+         * @param param {string} - 分类参数 (例如 "p_ID" 或 "g_ID")
+         * @param options {string[]} - 排序等选项
+         * @param page {number} - 页码
+         * @returns {Promise<{comics: Comic[], maxPage: number}>}
+         */
+        load: async (categoryName, param, options, page) => { 
+            const [type, id] = param.split('_'); 
+            let sortQueryParam = "";
+            let yearQueryParam = ""; // TODO: Годы пока не реализованы как опция
 
-            if(options && options[0]){ // Сортировка
-                const [sortBy, sortDir] = options[0].split('_'); // например "date_desc"
-                sortParam = `?dlenewssortby=${sortBy}&dledirection=${sortDir.toUpperCase()}`;
+            if(options && options[0]){ 
+                const [sortBy, sortDir] = options[0].split('_'); 
+                sortQueryParam = `?dlenewssortby=${sortBy}&dledirection=${sortDir.toUpperCase()}`;
             }
-            // TODO: Обработка опции года (options[1] если добавим) - /y/FROM-TO/
-
-            const url = `${this.BASE_URL}/xfsearch/${type}/${id}/page/${page}/${sortParam}`;
+            
+            const url = `${this.BASE_URL}/xfsearch/${type}/${id}/page/${page}/${sortQueryParam}`;
             
             const res = await Network.get(url);
-            if (res.status !== 200) throw `HTTP Error ${res.status}`;
-            const document = new HtmlDocument(res.body); // ИСПРАВЛЕНО
+            if (res.status !== 200) throw `HTTP 请求错误，状态码: ${res.status}`;
+            const document = new HtmlDocument(res.body); 
 
-            // Используем тот же парсер, что и для search
             const comicElements = document.selectAll('#dle-content div.readed.d-flex.short');
             const comics = comicElements.map(element => {
                 const titleAnchor = element.select('h2.readed__title > a');
                 const coverImage = element.select('a.readed__img > img');
                 let descriptionText = "";
                 const infoItems = element.selectAll('ul.readed__info > li');
-                if (infoItems.length > 0) descriptionText = infoItems.first().text().trim();
-                const lastIssueElement = infoItems.find(li => li.select('span')?.text()?.includes('Last issue:'));
-                if (lastIssueElement) descriptionText += (descriptionText ? "\n" : "") + lastIssueElement.text().replace("Last issue:", "Last:").trim();
+                if (infoItems && infoItems.length > 0 && typeof infoItems[0].text === 'function') {
+                    descriptionText = infoItems[0].text().trim();
+                }
+                let lastIssueText = "";
+                 if (infoItems && typeof infoItems.find === 'function') {
+                    const lastIssueElement = infoItems.find(li => {
+                        const span = li.select('span');
+                        return span && typeof span.text === 'function' && span.text().includes('Last issue:');
+                    });
+                    if (lastIssueElement && typeof lastIssueElement.text === 'function') {
+                        lastIssueText = lastIssueElement.text().replace("Last issue:", "Last:").trim();
+                    }
+                }
+                if (lastIssueText) {
+                     descriptionText += (descriptionText ? "\n" : "") + lastIssueText;
+                }
 
-                const comicUrl = titleAnchor.attr('href');
+                const comicUrl = titleAnchor ? titleAnchor.attr('href') : null;
+                if (!comicUrl) return null;
                 const idMatch = comicUrl.match(/\/(\d+-[^\/]+\.html)/);
                 const comicId = idMatch ? idMatch[1].replace('.html', '') : null;
                 if (!comicId) return null;
 
-                const title = titleAnchor.text().trim();
-                const cover = this.BASE_URL + coverImage.attr('data-src');
+                const title = titleAnchor ? titleAnchor.text().trim() : "未知标题";
+                const coverPath = coverImage ? coverImage.attr('data-src') : null;
+                const cover = coverPath ? this.BASE_URL + coverPath : "";
+                
                 const metaItems = element.selectAll('div.readed__meta > div.readed__meta-item');
                 let subTitle = ""; const tags = [];
-                if (metaItems.length > 0) {
-                    const publisherText = metaItems.first().text().trim();
+                if (metaItems && metaItems.length > 0) {
+                    const publisherElement = metaItems[0];
+                    const publisherText = publisherElement && typeof publisherElement.text === 'function' ? publisherElement.text().trim() : "";
                     if(publisherText) { subTitle = publisherText; tags.push(publisherText); }
-                    if (metaItems.length > 1) { const year = metaItems.last().text().trim(); if(year && !isNaN(year)) tags.push(year); }
+                    if (metaItems.length > 1) { 
+                        const yearElement = metaItems[metaItems.length - 1];
+                        const year = yearElement && typeof yearElement.text === 'function' ? yearElement.text().trim() : "";
+                        if(year && !isNaN(year)) tags.push(year); 
+                    }
                 }
                 return { id: comicId, title: title, cover: cover, subTitle: subTitle || null, description: descriptionText, tags: tags };
             }).filter(comic => comic != null);
 
             let maxPage = 1;
-            const paginationElements = document.selectAll('div.pagination__pages a'); // (Источник 330 из comix.txt)
+            const paginationElements = document.selectAll('div.pagination__pages a'); 
             const currentPageSpan = document.select('div.pagination__pages span');
              if (paginationElements.length > 0) {
                 const pageNumbers = paginationElements.map(a => parseInt(a.text().trim())).filter(n => !isNaN(n));
@@ -289,54 +358,55 @@ class BatCaveBizSource extends ComicSource {
             } else if (comics.length === 0 && !document.select('div.pagination__pages a')) {
                 maxPage = 1;
             }
-            document.dispose(); // ИСПРАВЛЕНО
+            document.dispose();
             return { comics, maxPage };
         },
-        // Опции сортировки (Источник 314-325 из comix.txt)
+        // 分类页面的排序选项 (Источник 314-325 из comix.txt)
         optionList: [
             {
                 options: [
-                    "date_desc-Date (Newest First)", // dle_change_sort('date','desc') - DESC по умолчанию
-                    "date_asc-Date (Oldest First)",   // dle_change_sort('date','asc')
-                    "editdate_desc-Date of Change",  // dle_change_sort('editdate','desc')
-                    "rating_desc-Rating",            // dle_change_sort('rating','desc')
-                    "news_read_desc-Reads",          // dle_change_sort('news_read','desc')
-                    "comm_num_desc-Comments",        // dle_change_sort('comm_num','desc')
-                    "title_asc-Title (A-Z)",         // dle_change_sort('title','asc')
-                    "title_desc-Title (Z-A)",        // dle_change_sort('title','desc')
+                    "date_desc-日期 (最新)", 
+                    "date_asc-日期 (最早)",  
+                    "editdate_desc-更新日期", 
+                    "rating_desc-评分",           
+                    "news_read_desc-阅读量",         
+                    "comm_num_desc-评论数",       
+                    "title_asc-标题 (A-Z)",        
+                    "title_desc-标题 (Z-A)",       
                 ],
-                label: "Sort by"
+                label: "排序方式"
             }
-            // TODO: Можно добавить опцию для фильтрации по годам, если это необходимо.
-            // Это потребует более сложной логики для формирования URL в load.
+            // TODO: Можно добавить фильтр по годам, если это необходимо в optionList.
+            // "y": { "name": "y", "title": "Year of issue", "format": "range", "values": { "min": 1929, "max": 2024 } }
+            // Это потребует ввода двух значений (от и до) или выбора из списка.
         ],
     };
 
-    // search related
+    // 搜索相关
     search = {
         load: async (keyword, options, page) => {
             const url = `${this.BASE_URL}/search/${encodeURIComponent(keyword)}/page/${page}/`;
             const res = await Network.get(url);
             if (res.status !== 200) {
-                throw `HTTP error ${res.status}`;
+                throw `HTTP请求错误，状态码: ${res.status}`;
             }
-            const document = new HtmlDocument(res.body); // ИСПРАВЛЕНО
-            //const comicElements = document.selectAll('#dle-content div.readed.d-flex.short'); 
+            const document = new HtmlDocument(res.body);
+            // Исправлено: убедимся, что comicElements определена до использования
+            const comicElements = document.selectAll('#dle-content div.readed.d-flex.short'); 
 
-// ... inside search.load ...
             const comics = comicElements.map(element => {
                 const titleAnchor = element.select('h2.readed__title > a');
                 const coverImage = element.select('a.readed__img > img');
                 
                 let descriptionText = "";
-                const infoItems = element.selectAll('ul.readed__info > li'); // This should return HtmlElement[]
+                const infoItems = element.selectAll('ul.readed__info > li');
                 
-                if (infoItems && infoItems.length > 0 && typeof infoItems[0].text === 'function') { // Check if it's an array and first element has .text
-                    descriptionText = infoItems[0].text().trim(); // Replaced .first() with [0]
+                if (infoItems && infoItems.length > 0 && infoItems[0] && typeof infoItems[0].text === 'function') { 
+                    descriptionText = infoItems[0].text().trim();
                 }
 
                 let lastIssueText = "";
-                if (infoItems && typeof infoItems.find === 'function') { // Check if .find is available
+                if (infoItems && typeof infoItems.find === 'function') { 
                     const lastIssueElement = infoItems.find(li => {
                         const span = li.select('span');
                         return span && typeof span.text === 'function' && span.text().includes('Last issue:');
@@ -350,17 +420,14 @@ class BatCaveBizSource extends ComicSource {
                      descriptionText += (descriptionText ? "\n" : "") + lastIssueText;
                 }
 
-                // ... rest of your parsing for comicUrl, id, title, cover, metaItems, etc. ...
-                // Ensure all other .select() calls are checked for null before calling .text() or .attr()
-
                 const comicUrl = titleAnchor ? titleAnchor.attr('href') : null;
-                if (!comicUrl) return null; // Essential check
+                if (!comicUrl) return null; 
 
                 const idMatch = comicUrl.match(/\/(\d+-[^\/]+\.html)/);
                 const id = idMatch ? idMatch[1].replace('.html', '') : null;
                 if (!id) return null;
 
-                const title = titleAnchor ? titleAnchor.text().trim() : "Unknown Title";
+                const title = titleAnchor ? titleAnchor.text().trim() : "未知标题";
                 const coverPath = coverImage ? coverImage.attr('data-src') : null;
                 const cover = coverPath ? this.BASE_URL + coverPath : "";
                 
@@ -368,14 +435,14 @@ class BatCaveBizSource extends ComicSource {
                 let subTitle = ""; 
                 const tags = [];
                 if (metaItems && metaItems.length > 0) {
-                    const publisherElement = metaItems[0]; // Use [0] instead of .first()
+                    const publisherElement = metaItems[0]; 
                     const publisherText = publisherElement && typeof publisherElement.text === 'function' ? publisherElement.text().trim() : "";
                     if(publisherText) { 
                         subTitle = publisherText; 
                         tags.push(publisherText); 
                     }
                     if (metaItems.length > 1) { 
-                        const yearElement = metaItems[metaItems.length - 1]; // Use [length-1] instead of .last()
+                        const yearElement = metaItems[metaItems.length - 1]; 
                         const year = yearElement && typeof yearElement.text === 'function' ? yearElement.text().trim() : "";
                         if(year && !isNaN(year)) tags.push(year); 
                     }
@@ -390,7 +457,6 @@ class BatCaveBizSource extends ComicSource {
                     tags: tags,
                 };
             }).filter(comic => comic != null);
-// ...
 
             let maxPage = 1;
             const paginationElements = document.selectAll('div.pagination__pages a'); 
@@ -403,55 +469,156 @@ class BatCaveBizSource extends ComicSource {
                  maxPage = 1;
             } else if (comics.length === 0 && !document.select('div.pagination__pages a')) { maxPage = 1; }
             
-            document.dispose(); // ИСПРАВЛЕНО
+            document.dispose();
             return { comics: comics, maxPage: maxPage };
         },
         optionList: [], 
     };
 
-    // favorite related
+    // 收藏夹相关
     favorites = {
+        // 是否支持多收藏夹 (судя по window.favorites на странице деталей комикса - да)
         multiFolder: true, 
-        // TODO: Все функции ниже требуют анализа XHR-запросов.
+        // TODO: Все функции ниже требуют анализа XHR-запросов (POST/GET запросы на сервер при работе с избранным).
+        // JavaScript переменная `window.favorites` (найденная в 章节详细页.txt) и `follow.toggle()` 
+        // являются хорошими отправными точками для понимания того, какие запросы могут отправляться.
+        /**
+         * Добавить или удалить из избранного
+         * @param comicId {string} - ID комикса (формат "ID-SLUG")
+         * @param folderId {string} - Имя папки (например, "reading", "later")
+         * @param isAdding {boolean} - true для добавления, false для удаления
+         * @param favoriteId {string?} - ID элемента в избранном (если есть)
+         */
         addOrDelFavorite: async (comicId, folderId, isAdding, favoriteId) => {
-            throw 'favorites.addOrDelFavorite not implemented. Requires XHR inspection.';
+            // ПРИМЕР (требует реальных данных XHR):
+            // const action = isAdding ? 'addtofolder' : 'removefromfolder';
+            // // folderId здесь - это имя папки, например 'reading'. На сервере может использоваться ID папки.
+            // // window.favorites.folders.reading.id (из 章节详细页.txt) дает числовой ID папки.
+            // const numericFolderId = this.favorites.loadFolders.siteFoldersDefinition[folderId]?.id || folderId;
+            // const res = await Network.post(`${this.BASE_URL}/engine/ajax/favorites.php`, {}, 
+            //    `fav_action=${action}&fav_id=${numericFolderId}&news_id=${comicId.split('-')[0]}&user_hash=ВАШ_USER_HASH`);
+            // if (res.status === 200 && JSON.parse(res.body).success) return "ok";
+            throw 'favorites.addOrDelFavorite не реализовано. Требуется анализ XHR-запросов.';
         },
+        /**
+         * Загрузка списка папок избранного
+         * @param comicId {string?} - ID комикса, чтобы проверить, в каких папках он находится
+         */
         loadFolders: async (comicId) => {
-             const siteFoldersDefinition = { 
-                "reading": { "id": "1", "title": "Reading" }, // (Источник 2114 из 章节详细页.txt)
-                "later": { "id": "2", "title": "Later" }, // (Источник 2117 из 章节详细页.txt)
-                "readed": { "id": "3", "title": "Finished" }, // (Источник 2120 из 章节详细页.txt)
-                "delayed": { "id": "4", "title": "On Hold" }, // (Источник 2123 из 章节详细页.txt)
-                "dropped": { "id": "5", "title": "Dropped" }, // (Источник 2126 из 章节详细页.txt)
-                "disliked": { "id": "6", "title": "Disliked" }, // (Источник 2130 из 章节详细页.txt)
-                "liked": { "id": "7", "title": "Favorites" } // (Источник 2133 из 章节详细页.txt)
+            // Структура папок взята из window.favorites на странице деталей комикса
+            const siteFoldersDefinition = { 
+                "reading": { "id": "1", "title": "Читаю" },
+                "later": { "id": "2", "title": "Позже" },
+                "readed": { "id": "3", "title": "Прочитано" },
+                "delayed": { "id": "4", "title": "Отложено" },
+                "dropped": { "id": "5", "title": "Брошено" },
+                "disliked": { "id": "6", "title": "Не понравилось" },
+                "liked": { "id": "7", "title": "Любимое" }
             };
             let folders = {};
             for (const key in siteFoldersDefinition) {
                 folders[siteFoldersDefinition[key].name] = siteFoldersDefinition[key].title; 
             }
             let favoritedIn = [];
-            // TODO: Нужен XHR запрос для определения, в каких папках комикс, если comicId задан.
+            // TODO: Нужен XHR запрос для определения, в каких папках находится конкретный comicId.
+            // `window.favorites.active` (из 章节详细页.txt) показывает папку только для ТЕКУЩЕГО открытого комикса.
+            // Если `comicId` передан, нужно сделать запрос, чтобы узнать его статус в папках.
+            if (comicId) {
+                // Пример:
+                // const numericComicId = comicId.split('-')[0];
+                // const favStatusRes = await Network.get(`${this.BASE_URL}/ajax/comic_favorite_status.php?news_id=${numericComicId}`);
+                // const activeFolder = JSON.parse(favStatusRes.body).folder_name; // Предположим, API возвращает имя папки
+                // if (activeFolder) favoritedIn.push(activeFolder);
+            }
             return { folders: folders, favorited: favoritedIn };
         },
+        /**
+         * Добавить папку
+         */
         addFolder: async (name) => {
-            throw 'favorites.addFolder not implemented. Requires XHR inspection.';
+            // TODO: Требуется анализ XHR-запросов
+            throw 'favorites.addFolder не реализовано.';
         },
+        /**
+         * Удалить папку
+         */
         deleteFolder: async (folderId) => {
-            throw 'favorites.deleteFolder not implemented. Requires XHR inspection.';
+            // TODO: Требуется анализ XHR-запросов
+            throw 'favorites.deleteFolder не реализовано.';
         },
+        /**
+         * Загрузить комиксы из папки избранного
+         * @param page {number} - номер страницы
+         * @param folder {string} - имя/ID папки (например, "reading")
+         */
         loadComics: async (page, folder) => { 
-            throw 'favorites.loadComics not implemented. Requires XHR/HTML inspection of favorites pages.';
+            // HTML для страницы закладок предоставлен в файле `收藏.txt` (URL: /favorites/reading)
+            // Пагинация там тоже есть.
+            const url = `${this.BASE_URL}/favorites/${folder}/page/${page}/`; // (Источник 107 из 收藏.txt - пример для пагинации)
+            const res = await Network.get(url);
+            if (res.status !== 200) throw `HTTP Error ${res.status}`;
+            const document = new HtmlDocument(res.body);
+
+            // Элементы комиксов на странице избранного (Источник 89 из 收藏.txt)
+            const comicElements = document.selectAll('#dle-content a.poster.grid-item'); 
+            const comics = comicElements.map(element => {
+                const comicUrl = element.attr('href');
+                const idMatch = comicUrl.match(/\/(\d+-[^\/]+\.html)/);
+                const id = idMatch ? idMatch[1].replace('.html', '') : null;
+                if (!id) return null;
+
+                const title = element.select('h3.poster__title').text().trim(); // (Источник 99 из 收藏.txt)
+                const imgElement = element.select('div.poster__img img');
+                const cover = imgElement ? this.BASE_URL + imgElement.attr('src') : ""; // У них 'src', а не 'data-src'
+                
+                const publisher = element.select('ul.poster__subtitle li').first()?.text()?.trim(); // (Источник 100 из 收藏.txt)
+                const year = element.select('ul.poster__subtitle li').last()?.text()?.replace('г.','').trim(); // (Источник 101 из 收藏.txt)
+                let subTitle = "";
+                if (publisher) subTitle += publisher;
+                if (year) subTitle += (publisher ? ` (${year})` : year);
+                
+                // Описание и теги могут отсутствовать в явном виде на этой странице для каждого элемента
+                return {
+                    id: id,
+                    title: title,
+                    cover: cover,
+                    subTitle: subTitle.trim() || null,
+                    // tags и description могут быть недоступны здесь, или их нужно получать отдельно
+                };
+            }).filter(comic => comic != null);
+
+            let maxPage = 1;
+            // Пагинация на странице избранного (Источник 108 из 收藏.txt)
+            const paginationElements = document.selectAll('div.pagination__pages a'); 
+            const currentPageSpan = document.select('div.pagination__pages span');
+             if (paginationElements.length > 0) {
+                const pageNumbers = paginationElements.map(a => parseInt(a.text().trim())).filter(n => !isNaN(n));
+                 if (currentPageSpan && !isNaN(parseInt(currentPageSpan.text().trim()))){
+                    pageNumbers.push(parseInt(currentPageSpan.text().trim()));
+                }
+                if (pageNumbers.length > 0) maxPage = Math.max(...pageNumbers);
+            } else if (currentPageSpan && currentPageSpan.text().trim() === "1" && comics.length > 0) {
+                 maxPage = 1;
+            } else if (comics.length === 0 && !document.select('div.pagination__pages a')) { 
+                maxPage = 1;
+            }
+
+            document.dispose();
+            return { comics, maxPage };
         },
     };
 
-    /// single comic related
+    /// Информация об отдельном комиксе
     comic = {
-        loadInfo: async (id) => { // id здесь "ID-SLUG", например "23236-peanuts-2012"
+        /**
+         * Загрузка полной информации о комиксе
+         * @param id {string} - ID комикса в формате "ID-SLUG" (например, "23236-peanuts-2012")
+         */
+        loadInfo: async (id) => { 
             const comicPageUrl = `${this.BASE_URL}/${id}.html`; 
             const res = await Network.get(comicPageUrl);
             if (res.status !== 200) throw `HTTP Error ${res.status}. URL: ${comicPageUrl}`;
-            const document = new HtmlDocument(res.body); // ИСПРАВЛЕНО
+            const document = new HtmlDocument(res.body);
 
             const title = document.select('header.page__header h1').text().trim(); 
             const cover = this.BASE_URL + document.select('div.page__poster img').attr('src'); 
@@ -466,20 +633,22 @@ class BatCaveBizSource extends ComicSource {
                 if (valueAnchors.length > 0) {
                     valueText = valueAnchors.map(a => a.text().trim()).join(', ');
                 } else {
-                     const nextSibling = labelElement.nextSibling();
-                     if (nextSibling && nextSibling.isText()){
-                         valueText = nextSibling.text().trim();
-                     } else if (nextSibling && nextSibling.isElement()){
-                         valueText = nextSibling.text().trim();
+                     const nextSiblingNode = labelElement.nextSibling();
+                     if (nextSiblingNode && nextSiblingNode.isText()){
+                         valueText = nextSiblingNode.text().trim();
+                     } else if (nextSiblingNode && nextSiblingNode.isElement()){ // Если следующий элемент не текст и не ссылка, берем его текст
+                         valueText = nextSiblingNode.text().trim();
                      }
                 }
                 if (labelElement && valueText) {
                     const label = labelElement.text().trim().replace(':', '');
+                    // Собираем значения в массив, если их несколько (например, авторы)
                     if (tagsData[label]) {
                         if (!Array.isArray(tagsData[label])) tagsData[label] = [tagsData[label]];
-                        tagsData[label].push(valueText);
+                        // Разделяем по запятой, если несколько авторов в одной строке без ссылок
+                        valueText.split(',').forEach(val => tagsData[label].push(val.trim()));
                     } else {
-                        tagsData[label] = [valueText];
+                        tagsData[label] = valueText.split(',').map(val => val.trim());
                     }
                 }
             });
@@ -517,14 +686,20 @@ class BatCaveBizSource extends ComicSource {
             for(const key in tagsData){
                 finalTags.set(key, Array.isArray(tagsData[key]) ? tagsData[key] : [tagsData[key]]);
             }
-            document.dispose(); // ИСПРАВЛЕНО
+            document.dispose();
             return {
                 title: title, cover: cover, description: description, tags: finalTags,
                 chapters: chaptersMap, recommend: recommend, _numericComicId: numericComicIdForEp 
             };
         },
 
+        /**
+         * Загрузка изображений для главы
+         * @param comicId {string} - ID комикса (формат "ID-SLUG" или числовой, если _numericComicId используется)
+         * @param epId {string} - ID главы
+         */
         loadEp: async (comicId, epId) => { 
+            // numericComicId должен быть числовым. comicId из app может быть "id-slug"
             const numericComicId = comicId.includes('-') ? comicId.split('-')[0] : comicId;
             const url = `${this.BASE_URL}/reader/${numericComicId}/${epId}`; 
             const res = await Network.get(url);
@@ -535,45 +710,48 @@ class BatCaveBizSource extends ComicSource {
             if (scriptData && scriptData.images) { 
                 images = scriptData.images.map(imgPath => {
                     if (imgPath.startsWith('http')) return imgPath;
-                    return this.BASE_URL + imgPath;
+                    return this.BASE_URL + imgPath; // Пути относительные от корня
                 });
             }
             return { images: images };
         },
 
+        /**
+         * Вызывается перед загрузкой каждого изображения главы
+         */
         onImageLoad: (url, comicId, epId) => {
              const numericComicId = comicId.includes('-') ? comicId.split('-')[0] : comicId;
             return { headers: { 'Referer': `${this.BASE_URL}/reader/${numericComicId}/${epId}` } };
         },
         
+        /**
+         * Обработка ссылок на комиксы
+         */
         link: {
-            domains: ['batcave.biz'],
+            domains: ['batcave.biz'], // Домены, с которых можно распознавать ссылки
             linkToId: (url) => {
+                // Преобразование URL в ID комикса (формат "ID-SLUG")
                 const comicMatch = url.match(/batcave\.biz\/(\d+-[^\/]+?)\.html/);
                 if (comicMatch && comicMatch[1]) return comicMatch[1]; 
-                // Для URL ридера возвращаем null, т.к. не можем получить полный "id-slug"
-                // const readerComicMatch = url.match(/batcave\.biz\/reader\/(\d+)/);
-                // if (readerComicMatch && readerComicMatch[1]) return readerComicMatch[1]; 
+                // Из URL ридера мы не можем надежно получить "ID-SLUG", только числовой ID.
+                // Если loadInfo требует "ID-SLUG", то такие ссылки не будут работать напрямую для info.
                 return null; 
             }
         },
+        /**
+         * Обработка клика по тегу
+         */
          onClickTag: (namespace, tag) => {
             let keyword = tag;
-            if (namespace === "Genre" || namespace === "Year" || namespace === "Publisher") {
-                 // Если это ссылка, извлекаем последнюю часть как параметр для категории
-                 const urlParts = tag.split('/');
-                 const param = urlParts.filter(part => part.length > 0).pop();
-                 if (param) {
-                    // Проверяем, существует ли такой param в наших categoryParams
-                    // Это сложная логика, так как namespace и tag не всегда дают прямой ключ к categoryParams
-                    // Для простоты, пока ищем по тексту тега
-                    return { action: 'search', keyword: tag };
-                 }
-            }
+            // Для известных пространств имен (ключей из tags) можно попытаться сформировать более точный поиск
+            // или перейти в категорию, если есть прямое соответствие.
+            // Сейчас для простоты все теги ведут на поиск по тексту тега.
             return { action: 'search', keyword: tag };
         },
     };
 
+    // Настройки источника (если нужны)
     settings = {};
+    // Переводы (если нужны)
     translation = {};
 }
